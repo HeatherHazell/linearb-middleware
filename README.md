@@ -1,6 +1,6 @@
 # LinearB Middleware for Multiple Jira Instances
 
-This repository contains a Python script to integrate multiple Jira instances with LinearB. The middleware fetches data from multiple Jira instances, consolidates it, and sends it to LinearB.
+Python script to integrate multiple Jira instances with LinearB. The middleware fetches data from multiple Jira instances, consolidates it, and sends it to LinearB.
 
 ## Features
 
