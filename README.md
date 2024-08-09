@@ -13,9 +13,4 @@ This repository contains a Python script to integrate multiple Jira instances wi
 - Python 3.x
 - Requests library
 
-## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/linearb-middleware.git
-   cd linearb-middleware
