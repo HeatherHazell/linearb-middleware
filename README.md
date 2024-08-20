@@ -12,5 +12,6 @@ Python script to integrate multiple Jira instances with LinearB. The middleware 
 
 - Python 3.x
 - Requests library
+- testing gitstream
 
 
