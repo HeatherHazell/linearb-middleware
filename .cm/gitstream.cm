@@ -4,60 +4,66 @@ manifest:
 
 automations:
   pr_policy_single_comment:
-    on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) AI description (VISIBLE in PR body; not a comment)
       - action: describe-changes@v1
-        args:
-          concat_mode: append
-
-      # 2) Quiet labels/assignments
       - action: add-label@v1
-        args:
-          label: "{{ calc.etr }} min review"
-          color: {{ colors.red if (calc.etr >= 20) else ( colors.yellow if (calc.etr >= 5) else colors.green ) }}
-
+        args: { label: "{{ calc.etr }} min review" }
       - action: add-label@v1
         when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
-        args:
-          label: "missing-jira"
-          color: {{ colors.red }}
-
+        args: { label: "missing-jira" }
       - action: add-reviewers@v1
+        args: { reviewers: {{ who.experts }} }
+  linearb_ai_review:
+    if:
+      - {{ not pr.draft }}
+    run:
+      - action: code-review@v1
         args:
-          reviewers: {{ repo | codeExperts(gt=10) }}
+          approve_on_LGTM: false
 
-      # 3) ONE consolidated, updatable comment (the only bot comment)
-      - action: add-comment@v1
-        args:
-          comment: |
-            ## gitStream Summary
+  approve_tests:
+    if:
+      - {{ files | allTests }}
+    run:
+      - action: add-label@v1
+        args: { label: "tests-only" }
+      - action: approve@v1
 
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
+  approve_tiny_changes:
+    if:
+      - {{ changes.lines <= 5 }}
+    run:
+      - action: add-label@v1
+        args: { label: "tiny-change" }
+      - action: approve@v1
 
-            ### Suggested Experts
-            {{ repo | codeExperts(gt=10, top=5) }}
+  label_deleted_files:
+    if:
+      - {{ changes.deleted > 0 }}
+    run:
+      - action: add-label@v1
+        args: { label: "deletes-files" }
 
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
+  enforce_required_labels:
+    if:
+      - {{ not (pr.labels | contains("component")) }}
+    run:
+      - action: add-label@v1
+        args: { label: "missing-required-labels" }
 
-            > Labels/reviewers were applied quietly to keep this PR clean.  
-            > This single summary replaces multiple scattered comments.
-
-# ----------------- helpers -----------------
 calc:
-  etr: {{ branch | estimatedReviewTime }}
+  etr: {{ estimatedReviewTime() }}
   safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
 
 has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
-  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
+  jira_ticket_in_title: {{ pr.title | match(regex=r/\b[A-Za-z]+-\d+\b/) }}
+  jira_ticket_in_desc: {{ pr.description | match(regex=r/atlassian\.net\/browse\/\w{1,}-\d{3,4}/) }}
+
+who:
+  experts: {{ repo | codeExperts(gt=10) }}
 
 is:
   formatting: {{ source.diff.files | isFormattingChange }}
@@ -65,8 +71,3 @@ is:
   tests: {{ files | allTests }}
   image: {{ files | allImages }}
   bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
-
-colors:
-  red: 'b60205'
-  yellow: 'fbca04'
-  green: '0e8a16'
