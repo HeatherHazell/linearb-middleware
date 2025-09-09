@@ -1,72 +1,103 @@
 # -*- mode: yaml -*-
+
 manifest:
   version: 1.0
 
 automations:
-  pr_policy_single_comment:
-    on: [pr_created, commit]
+  # Add a label that indicates how many minutes it will take to review the PR.
+  estimated_time_to_review:
     if:
-      - {{ not pr.draft }}
-      - {{ not is.bot }}
+      - true
     run:
-      # 1) AI description (VISIBLE in PR body; not a comment)
-      - action: describe-changes@v1
-        args:
-          concat_mode: append
-
-      # 2) Quiet labels/assignments
       - action: add-label@v1
         args:
           label: "{{ calc.etr }} min review"
           color: {{ colors.red if (calc.etr >= 20) else ( colors.yellow if (calc.etr >= 5) else colors.green ) }}
-
+  # Inform PR authors when they fail to reference Jira tickets in the PR title or description.
+  label_missing_jira_info:
+    if:
+      - {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
+    run:
       - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
         args:
           label: "missing-jira"
           color: {{ colors.red }}
-
-      - action: add-reviewers@v1
-        args:
-          reviewers: {{ repo | codeExperts(gt=10) }}
-
-      # 3) ONE consolidated, updatable comment (the only bot comment)
       - action: add-comment@v1
         args:
           comment: |
-            ## gitStream Summary
-
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
-
-            ### Suggested Experts
-            {{ repo | codeExperts(gt=10, top=5) }}
-
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
-
-            > Labels/reviewers were applied quietly to keep this PR clean.  
-            > This single summary replaces multiple scattered comments.
-
-# ----------------- helpers -----------------
-calc:
-  etr: {{ branch | estimatedReviewTime }}
-  safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
-
-has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
-  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
+            This PR is missing a Jira ticket reference in the title or description.
+            Please add a Jira ticket reference to the title or description of this PR.
+  # Post a comment that lists the best experts for the files that were modified.
+  explain_code_experts:
+    if:
+      - true
+    run:
+      - action: explain-code-experts@v1 
+        args:
+          gt: 10 
+  safe_changes:
+    # Triggered for any changes that only affect formatting, documentation, tests, or images
+    if:
+      - {{ is.formatting or is.docs or is.tests or is.image }}
+    # Apply a safe change label, approve the PR and explain why in a comment.
+    run: 
+      - action: add-label@v1
+        args:
+          label: 'safe-change'
+      - action: approve@v1
+      - action: add-comment@v1
+        args:
+          comment: |
+            This PR is considered a safe change and has been automatically approved.
+  label_unresolved_threads:  
+    if:  
+      - {{ pr.unresolved_threads }}
+    run:
+      - action: add-label@v1
+        args:
+          label: {{ pr.unresolved_threads }} Unresolved Thread(s)
+          color: {{ colors.yellow }}
+  linearb_ai_review:
+    on:
+      - pr_created
+      - commit
+    if:
+      - {{ not pr.draft }}
+      - {{ pr.author | match(list=['github-actions', 'dependabot', '[bot]']) | nope }}
+    run:
+      - action: code-review@v1
+        args:
+          approve_on_LGTM: {{ APPROVE_PR_ON_LGTM }} # optional arg, you can remove it
+  linearb_ai_description:
+    # trigger it only when PR is created or has new commits
+    on:
+      - pr_created
+      - commit
+    # skip description for Draft PRs and PRs from bots
+    if:
+      - {{ not pr.draft }}
+      - {{ pr.author | match(list=['github-actions', 'dependabot', '[bot]']) | nope }}
+    run:
+      - action: describe-changes@v1
+        args:
+          concat_mode: append
 
 is:
   formatting: {{ source.diff.files | isFormattingChange }}
   docs: {{ files | allDocs }}
   tests: {{ files | allTests }}
   image: {{ files | allImages }}
-  bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
+
+calc:
+  etr: {{ branch | estimatedReviewTime }}
+
+has:
+  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
+  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
 
 colors:
   red: 'b60205'
   yellow: 'fbca04'
   green: '0e8a16'
+
+APPROVE_PR_ON_LGTM: false # you can add conditions for PR approvals. For example - allowing approvals only for specific users
