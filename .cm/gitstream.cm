@@ -2,71 +2,77 @@
 manifest:
   version: 1.0
 
+# Single-comment mode policy designed to reduce noise and focus on Staff Engineer–level issues.
+# Customer goals:
+# - One consolidated comment that refreshes on updates
+# - Focus on critical issues only (no nits)
+# - Avoid long red/green code dumps
+# - Keep humans in the loop (no auto-merge)
+# - Removed: opt-out switches (always runs on non-draft PRs)
+
 automations:
   pr_policy_single_comment:
     on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
-      - {{ not is.bot }}
     run:
-      # 1) AI description (VISIBLE in PR body; not a comment)
-      - action: describe-changes@v1
-        args:
-          concat_mode: append
-
-      # 2) Quiet labels/assignments
+      # 1) Efficiency: Estimated Time to Review label
       - action: add-label@v1
         args:
           label: "{{ calc.etr }} min review"
-          color: {{ colors.red if (calc.etr >= 20) else ( colors.yellow if (calc.etr >= 5) else colors.green ) }}
+          color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
 
-      - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
-        args:
-          label: "missing-jira"
-          color: {{ colors.red }}
-
+      # 2) Routing: suggest experts and assign reviewers (optional; no auto-merge)
       - action: add-reviewers@v1
         args:
-          reviewers: {{ repo | codeExperts(gt=10) }}
+          reviewers: "{{ who.experts_top5 }}"
 
-      # 3) ONE consolidated, updatable comment (the only bot comment)
+      # 3) Concise PR description (no verbose dumps)
+      - action: describe-changes@v1
+        args:
+          concat_mode: replace
+
+      # 4) Final consolidated summary comment (single comment refreshed each run)
       - action: add-comment@v1
         args:
           comment: |
-            ## gitStream Summary
+            ## gitStream Summary (Single-Comment Mode)
+            **ETR:** {{ calc.etr }} min · **Unresolved:** {{ pr.unresolved_threads }} · **Reviewers:** {{ who.experts_top5 | default(value='(none)') }}
+            
+            ### Review Focus (Staff Engineer perspective)
+            - Surface **critical** issues only: correctness/logic, performance, security, maintainability blockers.
+            - Avoid style-only nits and contextually irrelevant null-reference notes.
+            - Summarize recommendations in plain text; **avoid long red/green code blocks**.
 
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
+            ### Example guidance
+            - If applicable, consider: *Move the `should_use_declared_value?` call outside the loop; cache its boolean result before iterating.*
 
-            ### Suggested Experts
-            {{ repo | codeExperts(gt=10, top=5) }}
+            ---
+            _Note:_ gitStream does **not** auto-merge; humans make the final decision.
 
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
-
-            > Labels/reviewers were applied quietly to keep this PR clean.  
-            > This single summary replaces multiple scattered comments.
-
-# ----------------- helpers -----------------
-calc:
-  etr: {{ branch | estimatedReviewTime }}
-  safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
-
-has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
-  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
+  # Add unresolved-threads label only when there are open threads (kept separate so it can be conditional)
+  label_unresolved_threads:
+    on: [pr_created, commit, review_comment]
+    if:
+      - {{ pr.unresolved_threads > 0 }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "{{ pr.unresolved_threads }} unresolved thread(s)"
+          color: {{ colors.yellow }}
 
 is:
-  formatting: {{ source.diff.files | isFormattingChange }}
-  docs: {{ files | allDocs }}
-  tests: {{ files | allTests }}
-  image: {{ files | allImages }}
-  bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
+  # File classification helpers (schema-safe)
+  formatting: {{ files | isFormattingChange }}
+  docs:       {{ files | allDocs }}
+  tests:      {{ files | allTests }}
+  image:      {{ files | allImages }}
+
+calc:
+  # Estimated time to review for label
+  etr: {{ branch | estimatedReviewTime }}
 
 colors:
-  red: 'b60205'
+  red:    'b60205'
   yellow: 'fbca04'
-  green: '0e8a16'
+  green:  '0e8a16'
