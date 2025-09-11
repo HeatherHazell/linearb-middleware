@@ -7,66 +7,51 @@ automations:
     on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
-      - {{ not is.bot }}
     run:
-      # 1) AI description (VISIBLE in PR body; not a comment)
+      - action: add-label@v1
+        args:
+          label: "{{ (calc.etr | default(value=0)) }} min review"
+          color: {{ colors.red if ((calc.etr | default(value=0)) >= 20) else (colors.yellow if ((calc.etr | default(value=0)) >= 5) else colors.green) }}
+
       - action: describe-changes@v1
         args:
-          concat_mode: append
+          concat_mode: replace
 
-      # 2) Quiet labels/assignments
-      - action: add-label@v1
-        args:
-          label: "{{ calc.etr }} min review"
-          color: {{ colors.red if (calc.etr >= 20) else ( colors.yellow if (calc.etr >= 5) else colors.green ) }}
-
-      - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
-        args:
-          label: "missing-jira"
-          color: {{ colors.red }}
-
-      - action: add-reviewers@v1
-        args:
-          reviewers: {{ repo | codeExperts(gt=10) }}
-
-      # 3) ONE consolidated, updatable comment (the only bot comment)
+      # put the comment LAST again (safe now)
       - action: add-comment@v1
         args:
           comment: |
-            ## gitStream Summary
+            ## gitStream Summary (Single-Comment Mode)
+            **ETR:** {{ calc.etr | default(value='(n/a)') }} min · **Unresolved:** {{ pr.unresolved_threads | default(value=0) }}
 
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
+            ### Review Focus (Staff Engineer perspective)
+            - Critical issues only: correctness/logic, performance, security, maintainability blockers.
+            - Avoid style-only nits and contextually irrelevant null-reference notes.
+            - Summarize recommendations; **avoid long red/green diffs**.
 
-            ### Suggested Experts
-            {{ repo | codeExperts(gt=10, top=5) }}
+  label_unresolved_threads:
+    on: [pr_created, commit, review_comment]
+    if:
+      - {{ pr.unresolved_threads > 0 }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "{{ pr.unresolved_threads }} unresolved thread(s)"
+          color: {{ colors.yellow }}
 
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
+  assign_reviewers_if_any:
+    on: [pr_created, commit]
+    if:
+      - {{ who.experts_top5 }}
+    run:
+      - action: add-reviewers@v1
+        args:
+          reviewers: "{{ who.experts_top5 }}"
 
-            > Labels/reviewers were applied quietly to keep this PR clean.  
-            > This single summary replaces multiple scattered comments.
-
-# ----------------- helpers -----------------
 calc:
   etr: {{ branch | estimatedReviewTime }}
-  safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
-
-has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
-  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
-
-is:
-  formatting: {{ source.diff.files | isFormattingChange }}
-  docs: {{ files | allDocs }}
-  tests: {{ files | allTests }}
-  image: {{ files | allImages }}
-  bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
 
 colors:
-  red: 'b60205'
+  red:    'b60205'
   yellow: 'fbca04'
-  green: '0e8a16'
+  green:  '0e8a16'
