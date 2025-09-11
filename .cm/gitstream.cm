@@ -3,78 +3,71 @@ manifest:
   version: 1.0
 
 automations:
-  pr_policy_single_comment:
+  # 1) Post the AI review as a PR REVIEW comment (clean separation)
+  gs_review_comment:
     on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
-      - {{ not is.bot }}
     run:
-      # 1) AI description (updates PR body; not a comment)
-      - action: describe-changes@v1
+      - action: add-pr-review@v1
         args:
-          concat_mode: append
+          event: COMMENT
+          body: |
+            ## gitStream Review (Staff Engineer Focus)
+            - Report **critical** issues only: correctness/logic, performance, security, maintainability blockers.
+            - Skip style-only nits and contextually irrelevant null-reference risks.
+            - Summarize fixes in plain text; **avoid long red/green code dumps**.
+            - If the issue is already clear from a prior comment, do not repeat it.
 
-      # 2) Quiet labels (ETR, and missing-jira if applicable)
-      - action: add-label@v1
-        args:
-          label: "{{ calc.etr }} min review"
-          color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
-
-      - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
-        args:
-          label: "missing-jira"
-          color: {{ colors.red }}
-
-      # 3) Assign reviewers silently (guard so empty list won't fail)
-      - action: add-reviewers@v1
-        when: {{ who.experts }}
-        args:
-          reviewers: {{ who.experts }}
-
-      # 4) ONE consolidated, updatable comment (single-comment mode)
+  # 2) Post a short SUMMARY as a normal conversation comment
+  gs_summary_comment:
+    on: [pr_created, commit]
+    if:
+      - {{ not pr.draft }}
+    run:
       - action: add-comment@v1
         args:
           comment: |
-            ## gitStream Summary (Single-Comment Mode)
+            ## gitStream Summary
+            **ETR:** {{ calc.etr | default(value='(n/a)') }} min · **Unresolved:** {{ pr.unresolved_threads | default(value=0) }}
 
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
+            - AI review posted above in the **Reviews** section.
+            - Humans remain in the loop (no auto-merge).
 
-            ### Review Focus (Staff Engineer perspective)
-            - Report **critical** issues only (correctness/logic, performance, security, maintainability blockers).
-            - Skip style-only nits and contextually irrelevant null-reference notes.
-            - Summarize recommendations in plain text; **avoid long red/green code dumps**.
+  # 3) ETR label (quiet signal that the policy ran)
+  gs_etr_label:
+    on: [pr_created, commit]
+    if:
+      - {{ not pr.draft }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "{{ (calc.etr | default(value=0)) }} min review"
+          color: {{ colors.red if ((calc.etr | default(value=0)) >= 20) else (colors.yellow if ((calc.etr | default(value=0)) >= 5) else colors.green) }}
 
-            ### Suggested Reviewers (auto-assigned)
-            {{ who.experts | default(value='(none)') }}
+  # 4) Unresolved-threads label only when > 0
+  gs_unresolved_label:
+    on: [pr_created, commit, review_comment]
+    if:
+      - {{ pr.unresolved_threads > 0 }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "{{ pr.unresolved_threads }} unresolved thread(s)"
+          color: {{ colors.yellow }}
 
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
+  # 5) Optional: concise PR description in the body (not a comment)
+  gs_concise_description:
+    on: [pr_created, commit]
+    if:
+      - {{ not pr.draft }}
+    run:
+      - action: describe-changes@v1
+        args:
+          concat_mode: replace
 
-            > Labels/reviewers were applied quietly to keep this PR clean.  
-
-# ----------------- config -----------------
 calc:
   etr: {{ branch | estimatedReviewTime }}
-  safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
-
-has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
-  jira_ticket_in_desc:  {{ pr.description | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
-
-who:
-  # Reuse the same expert list for assignment + display
-  experts: {{ repo | codeExperts(gt=10, top=5) }}
-
-is:
-  formatting: {{ source.diff.files | isFormattingChange }}
-  docs:       {{ files | allDocs }}
-  tests:      {{ files | allTests }}
-  image:      {{ files | allImages }}
-  bot:        {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
 
 colors:
   red:    'b60205'
