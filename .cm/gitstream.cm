@@ -9,16 +9,16 @@ automations:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) AI description (VISIBLE in PR body; not a comment)
+      # 1) AI description (updates PR body; not a comment)
       - action: describe-changes@v1
         args:
           concat_mode: append
 
-      # 2) Quiet labels/assignments
+      # 2) Quiet labels (ETR, and missing-jira if applicable)
       - action: add-label@v1
         args:
           label: "{{ calc.etr }} min review"
-          color: {{ colors.red if (calc.etr >= 20) else ( colors.yellow if (calc.etr >= 5) else colors.green ) }}
+          color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
 
       - action: add-label@v1
         when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
@@ -26,47 +26,57 @@ automations:
           label: "missing-jira"
           color: {{ colors.red }}
 
+      # 3) Assign reviewers silently (guard so empty list won't fail)
       - action: add-reviewers@v1
+        when: {{ who.experts }}
         args:
-          reviewers: {{ repo | codeExperts(gt=10) }}
+          reviewers: {{ who.experts }}
 
-      # 3) ONE consolidated, updatable comment (the only bot comment)
+      # 4) ONE consolidated, updatable comment (single-comment mode)
       - action: add-comment@v1
         args:
           comment: |
-            ## gitStream Summary
+            ## gitStream Summary (Single-Comment Mode)
 
             **AI PR Description:** Updated above in the PR body.  
             **Estimated Time to Review (ETR):** {{ calc.etr }} min  
             **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
             **Safe Changes Only?** {{ calc.safe_changes }}
 
-            ### Suggested Experts
-            {{ repo | codeExperts(gt=10, top=5) }}
+            ### Review Focus (Staff Engineer perspective)
+            - Report **critical** issues only (correctness/logic, performance, security, maintainability blockers).
+            - Skip style-only nits and contextually irrelevant null-reference notes.
+            - Summarize recommendations in plain text; **avoid long red/green code dumps**.
+
+            ### Suggested Reviewers (auto-assigned)
+            {{ who.experts | default(value='(none)') }}
 
             ### Jira Reference
             {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
 
             > Labels/reviewers were applied quietly to keep this PR clean.  
-            > This single summary replaces multiple scattered comments.
 
-# ----------------- helpers -----------------
+# ----------------- config -----------------
 calc:
   etr: {{ branch | estimatedReviewTime }}
   safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
 
 has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
-  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
+  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
+  jira_ticket_in_desc:  {{ pr.description | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
+
+who:
+  # Reuse the same expert list for assignment + display
+  experts: {{ repo | codeExperts(gt=10, top=5) }}
 
 is:
   formatting: {{ source.diff.files | isFormattingChange }}
-  docs: {{ files | allDocs }}
-  tests: {{ files | allTests }}
-  image: {{ files | allImages }}
-  bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
+  docs:       {{ files | allDocs }}
+  tests:      {{ files | allTests }}
+  image:      {{ files | allImages }}
+  bot:        {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
 
 colors:
-  red: 'b60205'
+  red:    'b60205'
   yellow: 'fbca04'
-  green: '0e8a16'
+  green:  '0e8a16'
