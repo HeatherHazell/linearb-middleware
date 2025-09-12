@@ -3,10 +3,14 @@ import requests
 from requests.auth import HTTPBasicAuth
 import json
 import time
-# Probably import logging of sorts
+import logging
 
 # Setup logging
-
+logging.basicConfig(
+    level=logging.INFO,  # change to DEBUG for more detail
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # Dynamically load configuration from environment variables
 jira_instances = [
@@ -39,8 +43,10 @@ def fetch_jira_data(jira_instance):
         'jql': f'project = {project_key}'
     }
     try:
+        logger.info(f"Fetching data from Jira instance: {jira_instance['url']} with project key: {project_key}")
         response = requests.get(url, headers=headers, params=query, auth=HTTPBasicAuth(jira_instance['username'], jira_instance['api_token']))
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response.raise_for_status()
+        logger.info(f"Successfully fetched {len(response.json().get('issues', []))} issues from {jira_instance['url']}")
         return response.json()
     except requests.exceptions.HTTPError as errh:
         logger.error(f"HTTP error occurred when fetching data from {jira_instance['url']}: {errh}")
@@ -54,9 +60,10 @@ def fetch_jira_data(jira_instance):
 
 # Consolidate data from multiple Jiras
 def consolidate_data(jira_data_list):
+    logger.info("Consolidating data from multiple Jira instances...")
     consolidated_data = []
     for jira_data in jira_data_list:
-        for issue in jira_data['issues']:
+        for issue in jira_data.get('issues', []):
             consolidated_issue = {
                 'id': issue['id'],
                 'key': issue['key'],
@@ -64,6 +71,7 @@ def consolidate_data(jira_data_list):
                 'status': issue['fields']['status']['name']
             }
             consolidated_data.append(consolidated_issue)
+    logger.info(f"Consolidated total of {len(consolidated_data)} issues")
     return consolidated_data
 
 # Send data to LinearB
@@ -73,8 +81,9 @@ def send_data_to_linearb(data):
         'Authorization': f"Bearer {linearb_api_key}"
     }
     try:
+        logger.info(f"Sending {len(data)} issues to LinearB at {linearb_url}")
         response = requests.post(linearb_url, headers=headers, json=data)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response.raise_for_status()
         logger.info("Data sent successfully to LinearB")
     except requests.exceptions.HTTPError as errh:
         logger.error(f"HTTP error occurred when sending data to LinearB: {errh}")
@@ -85,7 +94,7 @@ def send_data_to_linearb(data):
     except requests.exceptions.RequestException as err:
         logger.error(f"An error occurred when sending data to LinearB: {err}")
 
-# Main execution flow (exmaple)
+# Main execution flow
 def main():
     jira_data_list = []
     for jira_instance in jira_instances:
