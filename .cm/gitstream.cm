@@ -9,7 +9,7 @@ automations:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) AI description (kept ON)
+      # 1) AI description (kept ON, same as the working pattern you shared)
       - action: describe-changes@v1
         args:
           concat_mode: append
@@ -31,14 +31,14 @@ automations:
           color: {{ colors.yellow }}
 
       - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
+        if: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
         args:
           label: "missing-jira"
           color: {{ colors.red }}
 
-      # 3) Assign reviewers silently (guarded)
+      # 3) Assign reviewers silently (guard like your working file to avoid aborts)
       - action: add-reviewers@v1
-        when: {{ who.experts }}
+        if: {{ who.experts }}
         args:
           reviewers: {{ who.experts }}
 
