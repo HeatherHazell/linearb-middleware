@@ -3,70 +3,121 @@ manifest:
   version: 1.0
 
 automations:
-  pr_policy_single_comment:
+  # Low-noise policy: concise PR body, ETR label, and ONE review comment
+  pr_policy_low_noise:
     on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) AI description (updates PR body; not a comment)
-      - action: describe-changes@v1
-        args:
-          concat_mode: append
-
-      # 2) Quiet labels (ETR, and missing-jira if applicable)
+      # 1) Efficiency signal: ETR label
       - action: add-label@v1
         args:
-          label: "{{ calc.etr }} min review"
+          label: "{{ (calc.etr | default(value=0)) }} min review"
           color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
 
+      # 2) Keep PR body concise (not a comment)
+      - action: describe-changes@v1
+        args:
+          concat_mode: replace
+
+      # 3) ONE concise PR REVIEW comment (shows in Reviews + timeline)
+      - action: add-pr-review@v1
+        args:
+          event: COMMENT
+          body: |
+            ## gitStream Review — Low Noise (Staff Engineer focus)
+            **ETR:** {{ calc.etr | default(value='(n/a)') }} min · **Unresolved threads:** {{ pr.unresolved_threads | default(value=0) }}
+
+            **Scope & bar**
+            - Highlight **critical issues** only (correctness/logic, performance, security, maintainability blockers).
+            - Skip nitpicks; ignore null-reference risks that are contextually validated earlier in this code path.
+            - Keep suggestions short and actionable.
+
+  # Apply "missing-jira" label quietly when no ticket is detected
+  label_missing_jira_info:
+    on: [pr_created, commit]
+    if:
+      - {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
+    run:
       - action: add-label@v1
-        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
         args:
           label: "missing-jira"
           color: {{ colors.red }}
 
-      # 3) Assign reviewers silently (guard so empty list won't fail)
+  # Add unresolved-threads label only when there are open threads
+  label_unresolved_threads:
+    on: [pr_created, commit, review_comment]
+    if:
+      - {{ pr.unresolved_threads > 0 }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "{{ pr.unresolved_threads }} unresolved thread(s)"
+          color: {{ colors.yellow }}
+
+  # Assign reviewers silently only if we have candidates
+  assign_reviewers_if_any:
+    on: [pr_created, commit]
+    if:
+      - {{ who.experts }}
+    run:
       - action: add-reviewers@v1
-        when: {{ who.experts }}
         args:
           reviewers: {{ who.experts }}
 
-      # 4) ONE consolidated, updatable comment (single-comment mode)
-      - action: add-comment@v1
+  # --- New additions for speed/quality ---
+  # 1) PR Size Label
+  pr_size_label:
+    on: [pr_created, commit]
+    if:
+      - {{ not pr.draft }}
+    run:
+      - action: add-label@v1
         args:
-          comment: |
-            ## gitStream Summary (Single-Comment Mode)
+          label: "{{ calc.size_bucket }}"
+          color: {{ colors.yellow }}
 
-            **AI PR Description:** Updated above in the PR body.  
-            **Estimated Time to Review (ETR):** {{ calc.etr }} min  
-            **Unresolved Threads:** {{ pr.unresolved_threads | default(value=0) }}  
-            **Safe Changes Only?** {{ calc.safe_changes }}
+  # 2) Review SLA Label (24h with no reviews)
+  review_sla_label:
+    on: [commit]
+    if:
+      - {{ not pr.draft }}
+      - {{ pr.review_count == 0 }}
+      - {{ now - pr.created_at > duration(hours=24) }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "needs-review"
+          color: {{ colors.red }}
 
-            ### Review Focus (Staff Engineer perspective)
-            - Report **critical** issues only (correctness/logic, performance, security, maintainability blockers).
-            - Skip style-only nits and contextually irrelevant null-reference notes.
-            - Summarize recommendations in plain text; **avoid long red/green code dumps**.
-
-            ### Suggested Reviewers (auto-assigned)
-            {{ who.experts | default(value='(none)') }}
-
-            ### Jira Reference
-            {{ '✅ Found in title/description.' if (has.jira_ticket_in_title or has.jira_ticket_in_desc) else '⚠️ Missing Jira ticket. Please add one (e.g., `ABC-123` or an `atlassian.net/browse/...` link).' }}
-
-            > Labels/reviewers were applied quietly to keep this PR clean.  
+  # 3) Safe-change Flag
+  safe_change_flag:
+    on: [pr_created, commit]
+    if:
+      - {{ is.formatting or is.docs or is.tests or is.image }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "safe-change"
+          color: {{ colors.green }}
 
 # ----------------- config -----------------
 calc:
   etr: {{ branch | estimatedReviewTime }}
   safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
+  size_bucket: >
+    {{ 'XS (≤5 files)'  if (files | length) <= 5  else
+       'S (6–15 files)' if (files | length) <= 15 else
+       'M (16–40 files)' if (files | length) <= 40 else
+       'L (41–100 files)' if (files | length) <= 100 else
+       'XL (>100 files)' }}
 
 has:
-  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
-  jira_ticket_in_desc:  {{ pr.description | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
+  jira_ticket_in_title: {{ pr.title       | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
+  jira_ticket_in_desc:  {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
 
 who:
-  # Reuse the same expert list for assignment + display
   experts: {{ repo | codeExperts(gt=10, top=5) }}
 
 is:
