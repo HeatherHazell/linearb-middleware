@@ -48,8 +48,8 @@ def fetch_jira_data(jira_instance):
         logger.error(f"Error connecting to {jira_instance['url']}: {errc}")
     except requests.exceptions.Timeout as errt:
         logger.error(f"Timeout error occurred when fetching data from {jira_instance['url']}: {errt}")
-    except requests.exceptions.RequestException as err:
-        logger.error(f"An error occurred when fetching data from {jira_instance['url']}: {err}")
+    # except requests.exceptions.RequestException as err:
+    #     logger.error(f"An error occurred when fetching data from {jira_instance['url']}: {err}")
     return None
 
 # Consolidate data from multiple Jiras
@@ -102,3 +102,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
