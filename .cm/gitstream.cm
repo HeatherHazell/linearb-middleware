@@ -3,108 +3,62 @@ manifest:
   version: 1.0
 
 automations:
-  # Core low-noise policy: ETR label, AI description, ONE review comment
   pr_policy_low_noise:
     on: [pr_created, commit]
     if:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) Efficiency signal: ETR label
+      # 1) AI description (kept ON)
+      - action: describe-changes@v1
+        args:
+          concat_mode: append
+
+      # 2) Quiet labels
       - action: add-label@v1
         args:
           label: "{{ calc.etr }} min review"
           color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
 
-      # 2) AI description (kept ON, unguarded)
-      - action: describe-changes@v1
-        args:
-          concat_mode: replace
-
-      # 3) ONE concise PR REVIEW comment
-      - action: add-pr-review@v1
-        args:
-          event: COMMENT
-          body: |
-            ## gitStream Review — Low Noise (Staff Engineer focus)
-            **ETR:** {{ calc.etr | default(value='(n/a)') }} min · **Unresolved threads:** {{ pr.unresolved_threads | default(value=0) }}
-
-            **Scope & bar**
-            - Highlight **critical issues** only (correctness/logic, performance, security, maintainability blockers).
-            - Skip nitpicks; ignore null-reference risks that are already validated earlier in this code path.
-            - Keep suggestions short and actionable.
-
-  # Apply "missing-jira" label quietly when no ticket is detected
-  label_missing_jira_info:
-    on: [pr_created, commit]
-    if:
-      - {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
-    run:
-      - action: add-label@v1
-        args:
-          label: "missing-jira"
-          color: {{ colors.red }}
-
-  # Add unresolved-threads label only when there are open threads
-  label_unresolved_threads:
-    on: [pr_created, commit, review_comment]
-    if:
-      - {{ pr.unresolved_threads > 0 }}
-    run:
-      - action: add-label@v1
-        args:
-          label: "{{ pr.unresolved_threads }} unresolved thread(s)"
-          color: {{ colors.yellow }}
-
-  # Assign reviewers only if we have candidates (separate automation, schema-safe)
-  assign_reviewers_if_any:
-    on: [pr_created, commit]
-    if:
-      - {{ who.experts }}
-    run:
-      - action: add-reviewers@v1
-        args:
-          reviewers: {{ who.experts }}
-
-  # PR size label (helps cycle time triage)
-  pr_size_label:
-    on: [pr_created, commit]
-    if:
-      - {{ not pr.draft }}
-    run:
       - action: add-label@v1
         args:
           label: "{{ calc.size_bucket }}"
           color: {{ colors.yellow }}
 
-  # Review SLA label (quiet; no comments)
-  review_sla_label:
-    on: [commit]
-    if:
-      - {{ not pr.draft }}
-      - {{ pr.review_count == 0 }}
-      - {{ now - pr.created_at > duration(hours=24) }}
-    run:
       - action: add-label@v1
         args:
-          label: "needs-review"
+          label: "{{ pr.unresolved_threads | default(value=0) }} unresolved thread(s)"
+          color: {{ colors.yellow }}
+
+      - action: add-label@v1
+        when: {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
+        args:
+          label: "missing-jira"
           color: {{ colors.red }}
 
-  # Safe-change flag (docs/tests/images/formatting)
-  safe_change_flag:
-    on: [pr_created, commit]
-    if:
-      - {{ is.formatting or is.docs or is.tests or is.image }}
-    run:
-      - action: add-label@v1
+      # 3) Assign reviewers silently (guarded)
+      - action: add-reviewers@v1
+        when: {{ who.experts }}
         args:
-          label: "safe-change"
-          color: {{ colors.green }}
+          reviewers: {{ who.experts }}
+
+      # 4) ONE consolidated, updatable comment (conversation comment)
+      - action: add-comment@v1
+        args:
+          comment: |
+            ## gitStream Summary — Low Noise (Staff Engineer focus)
+
+            **AI PR Description:** Updated in the PR body above.  
+            **ETR:** {{ calc.etr }} min · **Unresolved threads:** {{ pr.unresolved_threads | default(value=0) }}
+
+            **Scope & bar**
+            - Highlight **critical issues** only (correctness/logic, performance, security, maintainability blockers).
+            - Skip nitpicks; ignore null-reference risks that are known to be validated earlier in this code path.
+            - Keep suggestions short and actionable.
 
 # ----------------- config -----------------
 calc:
   etr: {{ branch | estimatedReviewTime }}
-  safe_changes: {{ is.formatting or is.docs or is.tests or is.image }}
   size_bucket: >
     {{ 'XS (≤5 files)'  if (files | length) <= 5  else
        'S (6–15 files)' if (files | length) <= 15 else
@@ -113,7 +67,6 @@ calc:
        'XL (>100 files)' }}
 
 has:
-  # Keep Jira detection broad to avoid false negatives
   jira_ticket_in_title: {{ pr.title       | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
   jira_ticket_in_desc:  {{ pr.description | includes(regex=r/\b[A-Za-z][A-Za-z0-9_]+-\d+\b/) }}
 
@@ -121,11 +74,7 @@ who:
   experts: {{ repo | codeExperts(gt=10, top=5) }}
 
 is:
-  formatting: {{ source.diff.files | isFormattingChange }}
-  docs:       {{ files | allDocs }}
-  tests:      {{ files | allTests }}
-  image:      {{ files | allImages }}
-  bot:        {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
+  bot: {{ pr.author | match(list=['github-actions','_bot_','[bot]','dependabot','gitstream-cm','dayforce-global-sonar-integration','prvalidation','aida-bot']) | some }}
 
 colors:
   red:    'b60205'
