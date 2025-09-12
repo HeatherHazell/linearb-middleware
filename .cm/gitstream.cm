@@ -26,6 +26,7 @@ automations:
           color: {{ colors.yellow }}
 
       - action: add-label@v1
+        when: {{ (pr.unresolved_threads | default(value=0)) > 0 }}
         args:
           label: "{{ pr.unresolved_threads | default(value=0) }} unresolved thread(s)"
           color: {{ colors.yellow }}
@@ -36,11 +37,11 @@ automations:
           label: "missing-jira"
           color: {{ colors.red }}
 
-      # 3) Assign reviewers silently (guarded)
+      # 3) Assign reviewers silently (fully guarded + default to [])
       - action: add-reviewers@v1
-        when: {{ who.experts }}
+        when: {{ (who.experts | default(value=[])) | length > 0 }}
         args:
-          reviewers: {{ who.experts }}
+          reviewers: {{ who.experts | default(value=[]) }}
 
       # 4) ONE consolidated, updatable comment (conversation comment)
       - action: add-comment@v1
@@ -53,7 +54,7 @@ automations:
 
             **Scope & bar**
             - Highlight **critical issues** only (correctness/logic, performance, security, maintainability blockers).
-            - Skip nitpicks; ignore null-reference risks that are known to be validated earlier in this code path.
+            - Skip nitpicks; ignore null-reference risks that are validated earlier in this code path.
             - Keep suggestions short and actionable.
 
 # ----------------- config -----------------
