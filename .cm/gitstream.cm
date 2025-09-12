@@ -9,7 +9,7 @@ automations:
       - {{ not pr.draft }}
       - {{ not is.bot }}
     run:
-      # 1) AI description (kept ON)
+      # 1) AI description (updates PR body; not a comment)
       - action: describe-changes@v1
         args:
           concat_mode: append
@@ -21,12 +21,7 @@ automations:
           color: {{ colors.red if (calc.etr >= 20) else (colors.yellow if (calc.etr >= 5) else colors.green) }}
 
       - action: add-label@v1
-        args:
-          label: "{{ calc.size_bucket }}"
-          color: {{ colors.yellow }}
-
-      - action: add-label@v1
-        when: {{ (pr.unresolved_threads | default(value=0)) > 0 }}
+        when :  {{ pr.unresolved_threads }}
         args:
           label: "{{ pr.unresolved_threads | default(value=0) }} unresolved thread(s)"
           color: {{ colors.yellow }}
@@ -37,13 +32,12 @@ automations:
           label: "missing-jira"
           color: {{ colors.red }}
 
-      # 3) Assign reviewers silently (fully guarded + default to [])
+      # 3) Assign reviewers silently
       - action: add-reviewers@v1
-        when: {{ (who.experts | default(value=[])) | length > 0 }}
         args:
-          reviewers: {{ who.experts | default(value=[]) }}
+          reviewers: {{ who.experts }}
 
-      # 4) ONE consolidated, updatable comment (conversation comment)
+      # 4) ONE consolidated, updatable comment
       - action: add-comment@v1
         args:
           comment: |
@@ -54,7 +48,7 @@ automations:
 
             **Scope & bar**
             - Highlight **critical issues** only (correctness/logic, performance, security, maintainability blockers).
-            - Skip nitpicks; ignore null-reference risks that are validated earlier in this code path.
+            - Skip nitpicks; ignore null-reference risks that are known to be validated earlier in this code path.
             - Keep suggestions short and actionable.
 
 # ----------------- config -----------------
