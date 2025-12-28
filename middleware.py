@@ -6,7 +6,7 @@ import time
 # Probably import logging of sorts
 
 # Setup logging
-
+# blag blag lblag
 
 # Dynamically load configuration from environment variables
 jira_instances = [
@@ -102,3 +102,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
